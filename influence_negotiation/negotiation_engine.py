@@ -8,12 +8,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import gmail_client
+import instagram_scraper
 import pricing_engine
 import state_store
 import templates
-from config import FOLLOWUP_DELAY_DAYS, MAX_FOLLOWUPS_PER_STAGE
+from config import FOLLOWUP_DELAY_DAYS, MAX_FOLLOWUPS_PER_STAGE, NUM_VIDEOS
 from email_classifier import classify_email
+from scraper_utils import ScrapedStats
 from models import Creator, EmailIntent, NegotiationState
+from pricing_engine import PriceOffer
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,33 @@ def _send_and_update(
 
 
 # ──────────────────────────────────────────────
+# Scraping helper
+# ──────────────────────────────────────────────
+
+def _scrape_and_store(creator: Creator) -> Optional[ScrapedStats]:
+    """
+    Scrape the creator's Instagram reels page (opens/closes a Chrome tab),
+    store the percentile stats on the creator object.
+    Returns the ScrapedStats or None if scraping failed.
+    """
+    if not creator.instagram_handle:
+        logger.warning("No Instagram handle for %s — cannot scrape", creator.creator_email)
+        return None
+
+    stats = instagram_scraper.scrape_creator_reels(creator.instagram_handle)
+    if not stats:
+        return None
+
+    creator.scraped_p10 = stats.p10
+    creator.scraped_p25 = stats.p25
+    creator.scraped_p50 = stats.p50
+    creator.scraped_p75 = stats.p75
+    creator.scraped_reel_count = stats.count
+    state_store.upsert_creator(creator)
+    return stats
+
+
+# ──────────────────────────────────────────────
 # Entry points
 # ──────────────────────────────────────────────
 
@@ -59,7 +89,13 @@ def handle_new_interest(creator: Creator) -> None:
     """
     Called when a creator is first seeded as INTERESTED.
     Sends Reply 1 and moves them to AWAITING_RATE.
+    Instagram stats are scraped proactively so pricing is ready when they reply.
     """
+    # Scrape in the background so we have data when they send their rate
+    if creator.instagram_handle and not creator.scraped_p25:
+        logger.info("Pre-scraping @%s before sending Reply 1", creator.instagram_handle)
+        _scrape_and_store(creator)
+
     subject, body = templates.reply1(creator_name=creator.creator_name)
     _send_and_update(creator, subject, body, NegotiationState.AWAITING_RATE, reset_followup=True)
 
@@ -91,7 +127,6 @@ def handle_incoming_email(creator: Creator, email_body: str) -> None:
         _send_and_update(creator, subject, body, NegotiationState.DELAYED)
         return
 
-    # Creator is still asking questions — resend details or just wait
     if intent == EmailIntent.ASKING_DETAILS:
         if creator.state in (NegotiationState.AWAITING_RATE, NegotiationState.REPLY1_SENT):
             subject, body = templates.reply1(creator_name=creator.creator_name)
@@ -106,7 +141,6 @@ def handle_incoming_email(creator: Creator, email_body: str) -> None:
         _handle_acceptance(creator)
         return
 
-    # UNKNOWN — log for human review, don't take action
     logger.warning(
         "UNKNOWN intent from %s — manual review needed. Body: %.200s",
         creator.creator_email, email_body,
@@ -118,37 +152,51 @@ def _handle_rate_received(
     extracted_rate: Optional[float],
     intent: EmailIntent,
 ) -> None:
-    """Creator shared a rate. Compute offer and respond."""
+    """Creator shared a rate. Scrape IG data (if not already done), compute offer, respond."""
     if extracted_rate:
         creator.quoted_rate = extracted_rate
 
-    # Need metrics to compute offer
-    if not (creator.followers and creator.avg_views):
+    # Scrape if not already done
+    stats = None
+    if creator.scraped_p25:
+        # Re-use existing scraped data
+        stats = ScrapedStats(
+            handle=creator.instagram_handle or "",
+            views=[],
+            p10=creator.scraped_p10 or 0,
+            p25=creator.scraped_p25,
+            p50=creator.scraped_p50 or 0,
+            p75=creator.scraped_p75 or 0,
+            count=creator.scraped_reel_count or 0,
+        )
+        logger.info("Using cached scraped stats for @%s", creator.instagram_handle)
+    elif creator.instagram_handle:
+        logger.info("Scraping @%s now (rate received)", creator.instagram_handle)
+        stats = _scrape_and_store(creator)
+
+    if not stats:
         logger.warning(
-            "Cannot compute offer for %s — missing Instagram metrics. Please update via seed_creator().",
+            "Cannot compute offer for %s — no Instagram data. "
+            "Set instagram_handle via seed.py and ensure Chrome is logged in.",
             creator.creator_email,
         )
         return
 
     try:
-        offer = pricing_engine.compute_offer(
-            instagram_handle=creator.instagram_handle or creator.creator_email,
-            followers=creator.followers,
-            avg_views=creator.avg_views,
-            engagement_rate=creator.engagement_rate or 0.0,
-        )
+        offer: PriceOffer = pricing_engine.compute_offer_with_claude_review(stats, num_videos=NUM_VIDEOS)
     except Exception as e:
         logger.error("Pricing failed for %s: %s", creator.creator_email, e)
         return
 
-    # Store offer details
-    creator.our_offer_flat = offer.flat_rate
-    creator.our_offer_view_rate = offer.view_based_rate
-    creator.our_offer_view_target = offer.view_target
-    creator.our_offer_flat_bonus_threshold = offer.flat_bonus_threshold_views
-    creator.our_offer_flat_bonus_amount = offer.flat_bonus_amount
-    creator.our_offer_video_count = offer.video_count
+    # Store offer on creator record
+    creator.our_offer_flat_per_video = offer.flat_rate_per_video
+    creator.our_offer_b_flat = offer.option_b_flat
+    creator.our_offer_b_bonus = offer.option_b_bonus
+    creator.our_offer_b_view_target = offer.option_b_view_target
+    creator.our_offer_c_views = offer.option_c_guarantee_views
+    creator.our_offer_c_price = offer.option_c_price
     creator.budget_cap = offer.budget_cap
+    creator.video_count = offer.video_count
 
     # If quoted rate is WAY above budget cap, reject immediately
     if extracted_rate and extracted_rate > offer.budget_cap * 1.5:
@@ -159,15 +207,15 @@ def _handle_rate_received(
         _send_and_update(creator, subject, body, NegotiationState.HIGH_RATE_REJECTED)
         return
 
-    # Send our offer
+    # Build Reply 2 using scraped view data
     subject, body = templates.reply2(
         creator_name=creator.creator_name,
-        flat_rate=offer.flat_rate,
-        flat_bonus_threshold_views=offer.flat_bonus_threshold_views,
-        flat_bonus_amount=offer.flat_bonus_amount,
-        view_based_rate=offer.view_based_rate,
-        view_target=offer.view_target,
-        avg_views=creator.avg_views,
+        flat_rate=offer.option_b_flat,
+        flat_bonus_threshold_views=offer.option_b_view_target,
+        flat_bonus_amount=offer.option_b_bonus,
+        view_based_rate=offer.option_c_price,
+        view_target=offer.option_c_guarantee_views,
+        avg_views=int(stats.p50),
         video_count=offer.video_count,
     )
     _send_and_update(

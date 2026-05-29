@@ -6,10 +6,11 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "influence_negotiation"))
 
-# Import negotiation_engine once after conftest stubs are in place
 import negotiation_engine
 
-from models import Creator, EmailIntent, NegotiationState, PriceOffer
+from scraper_utils import ScrapedStats
+from models import Creator, EmailIntent, NegotiationState
+from pricing_engine import PriceOffer
 
 
 def _make_creator(**kwargs) -> Creator:
@@ -19,9 +20,11 @@ def _make_creator(**kwargs) -> Creator:
         state=NegotiationState.AWAITING_RATE,
         gmail_thread_id="thread_123",
         instagram_handle="testhandle",
-        followers=80000,
-        avg_views=40000,
-        engagement_rate=4.5,
+        scraped_p25=40_000.0,
+        scraped_p75=90_000.0,
+        scraped_p10=15_000.0,
+        scraped_p50=60_000.0,
+        scraped_reel_count=12,
     )
     defaults.update(kwargs)
     return Creator(**defaults)
@@ -29,8 +32,19 @@ def _make_creator(**kwargs) -> Creator:
 
 def _mock_offer() -> PriceOffer:
     return PriceOffer(
-        flat_rate=800, flat_bonus_threshold_views=150000, flat_bonus_amount=300,
-        view_based_rate=600, view_target=80000, video_count=2, budget_cap=960,
+        flat_rate_per_video=480.0,
+        flat_rate_total=960.0,
+        option_b_flat=960.0,
+        option_b_bonus=192.0,
+        option_b_total=1152.0,
+        option_b_view_target=75_000,
+        option_c_guarantee_views=75_000,
+        option_c_price=1125.0,
+        budget_cap=1324.0,
+        video_count=2,
+        p25_views=40_000,
+        p75_views=75_000,
+        effective_cpm=12.0,
     )
 
 
@@ -40,9 +54,8 @@ def test_rate_shared_sends_offer():
     gmail_client.send_reply = MagicMock()
     state_store.upsert_creator = MagicMock()
 
-    # Patch the names as they exist in negotiation_engine's own namespace
     with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 500.0, "rate given")):
-        with patch("pricing_engine.compute_offer", return_value=_mock_offer()):
+        with patch("pricing_engine.compute_offer_with_claude_review", return_value=_mock_offer()):
             creator = _make_creator()
             negotiation_engine.handle_incoming_email(creator, "My rate is $500 per video.")
 
@@ -86,7 +99,7 @@ def test_high_rate_rejection():
     state_store.upsert_creator = MagicMock()
 
     with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 5000.0, "very high")):
-        with patch("pricing_engine.compute_offer", return_value=_mock_offer()):
+        with patch("pricing_engine.compute_offer_with_claude_review", return_value=_mock_offer()):
             creator = _make_creator()
             negotiation_engine.handle_incoming_email(creator, "I charge $5000 per video.")
 
@@ -106,3 +119,21 @@ def test_delay_sends_delay_email():
 
     gmail_client.send_reply.assert_called_once()
     assert creator.state == NegotiationState.DELAYED
+
+
+def test_no_scraped_data_no_offer_sent():
+    """If no Instagram data and scraping fails, no offer email is sent."""
+    import gmail_client
+    import state_store
+    gmail_client.send_reply = MagicMock()
+    state_store.upsert_creator = MagicMock()
+
+    with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 500.0, "rate")):
+        with patch("instagram_scraper.scrape_creator_reels", return_value=None):
+            creator = _make_creator(
+                scraped_p25=None, scraped_p75=None,
+                scraped_p10=None, scraped_p50=None,
+            )
+            negotiation_engine.handle_incoming_email(creator, "My rate is $500.")
+
+    gmail_client.send_reply.assert_not_called()

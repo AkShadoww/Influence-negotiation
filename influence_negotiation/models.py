@@ -28,34 +28,31 @@ class EmailIntent(str, Enum):
 
 
 @dataclass
-class PriceOffer:
-    flat_rate: float
-    flat_bonus_threshold_views: int
-    flat_bonus_amount: float
-    view_based_rate: float
-    view_target: int
-    video_count: int
-    budget_cap: float
-
-
-@dataclass
 class Creator:
     creator_email: str
     creator_name: str
     state: NegotiationState = NegotiationState.INTERESTED
     gmail_thread_id: Optional[str] = None
     instagram_handle: Optional[str] = None
-    followers: Optional[int] = None
-    avg_views: Optional[int] = None
-    engagement_rate: Optional[float] = None
+
+    # Scraped Instagram stats (populated by instagram_scraper)
+    scraped_p10: Optional[float] = None
+    scraped_p25: Optional[float] = None
+    scraped_p50: Optional[float] = None
+    scraped_p75: Optional[float] = None
+    scraped_reel_count: Optional[int] = None
+
+    # Computed offer (populated by pricing_engine)
     quoted_rate: Optional[float] = None
-    our_offer_flat: Optional[float] = None
-    our_offer_view_rate: Optional[float] = None
-    our_offer_view_target: Optional[int] = None
-    our_offer_flat_bonus_threshold: Optional[int] = None
-    our_offer_flat_bonus_amount: Optional[float] = None
-    our_offer_video_count: Optional[int] = None
+    our_offer_flat_per_video: Optional[float] = None
+    our_offer_b_flat: Optional[float] = None
+    our_offer_b_bonus: Optional[float] = None
+    our_offer_b_view_target: Optional[int] = None
+    our_offer_c_views: Optional[int] = None
+    our_offer_c_price: Optional[float] = None
     budget_cap: Optional[float] = None
+    video_count: Optional[int] = None
+
     follow_up_count: int = 0
     last_email_sent_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
