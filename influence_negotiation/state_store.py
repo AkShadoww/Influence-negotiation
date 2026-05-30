@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS negotiations (
     scraped_p50                 NUMERIC(12,2),
     scraped_p75                 NUMERIC(12,2),
     scraped_reel_count          INTEGER,
+    scraped_min_views           INTEGER,
+    scraped_views_raw           TEXT,
 
     -- Offer details
     quoted_rate                 NUMERIC(10,2),
@@ -43,12 +45,22 @@ CREATE TABLE IF NOT EXISTS negotiations (
     budget_cap                  NUMERIC(10,2),
     video_count                 INTEGER,
 
+    -- 6 AI-suggested offers (JSON array)
+    suggested_offers_json       TEXT,
+
     follow_up_count             INTEGER NOT NULL DEFAULT 0,
     last_email_sent_at          TIMESTAMPTZ,
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
+
+# Idempotent column additions for tables that already exist in production
+_MIGRATIONS = [
+    "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS scraped_min_views INTEGER",
+    "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS scraped_views_raw TEXT",
+    "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS suggested_offers_json TEXT",
+]
 
 
 def get_connection() -> PgConnection:
@@ -69,6 +81,8 @@ def _cursor():
 def init_db() -> None:
     with _cursor() as cur:
         cur.execute(_CREATE_TABLE)
+        for migration in _MIGRATIONS:
+            cur.execute(migration)
     logger.info("Database initialised.")
 
 
@@ -89,6 +103,8 @@ def _row_to_creator(row: dict) -> Creator:
         scraped_p50=_f(row, "scraped_p50"),
         scraped_p75=_f(row, "scraped_p75"),
         scraped_reel_count=row.get("scraped_reel_count"),
+        scraped_min_views=row.get("scraped_min_views"),
+        scraped_views_raw=row.get("scraped_views_raw"),
         quoted_rate=_f(row, "quoted_rate"),
         our_offer_flat_per_video=_f(row, "our_offer_flat_per_video"),
         our_offer_b_flat=_f(row, "our_offer_b_flat"),
@@ -98,6 +114,7 @@ def _row_to_creator(row: dict) -> Creator:
         our_offer_c_price=_f(row, "our_offer_c_price"),
         budget_cap=_f(row, "budget_cap"),
         video_count=row.get("video_count"),
+        suggested_offers_json=row.get("suggested_offers_json"),
         follow_up_count=row.get("follow_up_count", 0),
         last_email_sent_at=row.get("last_email_sent_at"),
         created_at=row.get("created_at", datetime.utcnow()),
@@ -112,16 +129,20 @@ def upsert_creator(creator: Creator) -> None:
             INSERT INTO negotiations (
                 creator_email, creator_name, state, gmail_thread_id, instagram_handle,
                 scraped_p10, scraped_p25, scraped_p50, scraped_p75, scraped_reel_count,
+                scraped_min_views, scraped_views_raw,
                 quoted_rate, our_offer_flat_per_video,
                 our_offer_b_flat, our_offer_b_bonus, our_offer_b_view_target,
                 our_offer_c_views, our_offer_c_price, budget_cap, video_count,
+                suggested_offers_json,
                 follow_up_count, last_email_sent_at, created_at, updated_at
             ) VALUES (
                 %(creator_email)s, %(creator_name)s, %(state)s, %(gmail_thread_id)s, %(instagram_handle)s,
                 %(scraped_p10)s, %(scraped_p25)s, %(scraped_p50)s, %(scraped_p75)s, %(scraped_reel_count)s,
+                %(scraped_min_views)s, %(scraped_views_raw)s,
                 %(quoted_rate)s, %(our_offer_flat_per_video)s,
                 %(our_offer_b_flat)s, %(our_offer_b_bonus)s, %(our_offer_b_view_target)s,
                 %(our_offer_c_views)s, %(our_offer_c_price)s, %(budget_cap)s, %(video_count)s,
+                %(suggested_offers_json)s,
                 %(follow_up_count)s, %(last_email_sent_at)s, %(created_at)s, %(updated_at)s
             )
             ON CONFLICT (creator_email) DO UPDATE SET
@@ -134,6 +155,8 @@ def upsert_creator(creator: Creator) -> None:
                 scraped_p50 = EXCLUDED.scraped_p50,
                 scraped_p75 = EXCLUDED.scraped_p75,
                 scraped_reel_count = EXCLUDED.scraped_reel_count,
+                scraped_min_views = EXCLUDED.scraped_min_views,
+                scraped_views_raw = EXCLUDED.scraped_views_raw,
                 quoted_rate = EXCLUDED.quoted_rate,
                 our_offer_flat_per_video = EXCLUDED.our_offer_flat_per_video,
                 our_offer_b_flat = EXCLUDED.our_offer_b_flat,
@@ -143,6 +166,7 @@ def upsert_creator(creator: Creator) -> None:
                 our_offer_c_price = EXCLUDED.our_offer_c_price,
                 budget_cap = EXCLUDED.budget_cap,
                 video_count = EXCLUDED.video_count,
+                suggested_offers_json = EXCLUDED.suggested_offers_json,
                 follow_up_count = EXCLUDED.follow_up_count,
                 last_email_sent_at = EXCLUDED.last_email_sent_at,
                 updated_at = NOW()
@@ -158,6 +182,8 @@ def upsert_creator(creator: Creator) -> None:
                 "scraped_p50": creator.scraped_p50,
                 "scraped_p75": creator.scraped_p75,
                 "scraped_reel_count": creator.scraped_reel_count,
+                "scraped_min_views": creator.scraped_min_views,
+                "scraped_views_raw": creator.scraped_views_raw,
                 "quoted_rate": creator.quoted_rate,
                 "our_offer_flat_per_video": creator.our_offer_flat_per_video,
                 "our_offer_b_flat": creator.our_offer_b_flat,
@@ -167,6 +193,7 @@ def upsert_creator(creator: Creator) -> None:
                 "our_offer_c_price": creator.our_offer_c_price,
                 "budget_cap": creator.budget_cap,
                 "video_count": creator.video_count,
+                "suggested_offers_json": creator.suggested_offers_json,
                 "follow_up_count": creator.follow_up_count,
                 "last_email_sent_at": creator.last_email_sent_at,
                 "created_at": creator.created_at,
