@@ -30,7 +30,8 @@ BRAND_NAME = os.getenv("BRAND_NAME", "Reve")
 CAMPAIGN_DEADLINE = os.getenv("CAMPAIGN_DEADLINE", "February 05, 2026")
 
 # Instagram Scraper (Playwright)
-INSTAGRAM_USER_DATA_DIR = os.getenv("INSTAGRAM_USER_DATA_DIR", "/tmp/chrome-instagram-profile")
+# Auth file is written by startup.py from INSTAGRAM_AUTH_B64 env var
+INSTAGRAM_AUTH_FILE = os.getenv("INSTAGRAM_AUTH_FILE", "/tmp/instagram_auth.json")
 SCRAPER_HEADLESS = os.getenv("SCRAPER_HEADLESS", "true").lower() == "true"
 SCRAPER_NUM_REELS = int(os.getenv("SCRAPER_NUM_REELS", "12"))
 SCRAPER_SCROLL_PAUSE_MS = int(os.getenv("SCRAPER_SCROLL_PAUSE_MS", "2000"))
