@@ -2,11 +2,11 @@
 Instagram Reels scraper using Playwright.
 Ports the view-extraction logic from the Chrome extension (content.js).
 
-Design:
-- Maintains a single Browser instance across all creators (open new tab, scrape, close tab).
-- Requires a persistent Chrome user-data-dir so Instagram login is preserved.
-- Navigates to /@handle/reels, scrolls until NUM_REELS view counts are collected,
-  then returns ScrapedStats.
+Auth strategy:
+- Reads saved session from INSTAGRAM_AUTH_FILE (JSON produced by login.py).
+- On Railway, the session is stored as INSTAGRAM_AUTH_B64 env var and
+  decoded to disk at startup by startup.py.
+- Opens a NEW browser context per scrape batch; each creator gets its own tab.
 """
 
 import asyncio
@@ -14,57 +14,62 @@ import logging
 import time
 from typing import Optional
 
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from playwright.async_api import BrowserContext, Page, async_playwright
 
 from config import (
-    INSTAGRAM_USER_DATA_DIR,
+    INSTAGRAM_AUTH_FILE,
     SCRAPER_HEADLESS,
     SCRAPER_NUM_REELS,
     SCRAPER_SCROLL_PAUSE_MS,
     SCRAPER_TIMEOUT_S,
 )
-from scraper_utils import ScrapedStats, calculate_percentile, compute_stats_from_views
+from scraper_utils import ScrapedStats, compute_stats_from_views
 
 logger = logging.getLogger(__name__)
 
+# ── Shared browser context (created once per process) ───────────────────────
 
-# ── Shared browser instance (created once per process) ──────────────────────
-
-_browser: Optional[Browser] = None
 _context: Optional[BrowserContext] = None
-_playwright = None
+_playwright_instance = None
 
 
 async def _get_context() -> BrowserContext:
-    global _browser, _context, _playwright
+    global _context, _playwright_instance
+
     if _context is not None:
         return _context
 
-    _playwright = await async_playwright().start()
-    _context = await _playwright.chromium.launch_persistent_context(
-        user_data_dir=INSTAGRAM_USER_DATA_DIR,
+    _playwright_instance = await async_playwright().start()
+    browser = await _playwright_instance.chromium.launch(
         headless=SCRAPER_HEADLESS,
-        channel="chrome",          # use system Chrome so cookies/login persist
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
-        viewport={"width": 1280, "height": 900},
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
     )
-    logger.info("Chrome browser launched (persistent context: %s)", INSTAGRAM_USER_DATA_DIR)
+    _context = await browser.new_context(
+        storage_state=INSTAGRAM_AUTH_FILE,
+        viewport={"width": 1280, "height": 900},
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    )
+    logger.info("Browser context created with saved Instagram session.")
     return _context
 
 
 async def _close_context() -> None:
-    global _context, _playwright
+    global _context, _playwright_instance
     if _context:
         await _context.close()
         _context = None
-    if _playwright:
-        await _playwright.stop()
-        _playwright = None
+    if _playwright_instance:
+        await _playwright_instance.stop()
+        _playwright_instance = None
 
 
-# ── Core scraping ────────────────────────────────────────────────────────────
+# ── JS injected into the page to extract view counts ────────────────────────
+# Ported directly from content.js scrapeVisibleReels + extractViewCount
 
-# Ported directly from content.js — runs inside the browser page
 _EXTRACT_VIEWS_JS = """
 () => {
   function parseViewCount(str) {
@@ -109,9 +114,11 @@ _EXTRACT_VIEWS_JS = """
 """
 
 
+# ── Core scraping ─────────────────────────────────────────────────────────────
+
 async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
     """
-    Open a new browser tab, navigate to /@handle/reels, scroll to collect
+    Open a new tab, navigate to /@handle/reels, scroll to collect
     SCRAPER_NUM_REELS view counts, then close the tab.
     Returns ScrapedStats or None on failure.
     """
@@ -124,7 +131,7 @@ async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
 
     try:
         await page.goto(url, timeout=SCRAPER_TIMEOUT_S * 1000, wait_until="domcontentloaded")
-        await page.wait_for_timeout(3000)   # let reels grid render
+        await page.wait_for_timeout(3000)
 
         views: list[int] = []
         deadline = time.time() + SCRAPER_TIMEOUT_S
@@ -133,12 +140,11 @@ async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
         while len(views) < SCRAPER_NUM_REELS and time.time() < deadline:
             raw = await page.evaluate(_EXTRACT_VIEWS_JS)
             views = [int(v) for v in raw if v > 0]
-            logger.debug("@%s — scraped %d views so far", handle, len(views))
+            logger.debug("@%s — %d views so far", handle, len(views))
 
             if len(views) >= SCRAPER_NUM_REELS:
                 break
 
-            # Scroll down to load more reels
             await page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
             await page.wait_for_timeout(SCRAPER_SCROLL_PAUSE_MS)
             scroll_attempts += 1
@@ -148,14 +154,13 @@ async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
                 break
 
         if not views:
-            logger.error("@%s — could not scrape any views", handle)
+            logger.error("@%s — could not scrape any views (session may be expired)", handle)
             return None
 
-        # Use only the first SCRAPER_NUM_REELS (newest)
         views = views[:SCRAPER_NUM_REELS]
         stats = compute_stats_from_views(handle, views)
         logger.info(
-            "@%s scrape complete: %d reels | p10=%.0f p25=%.0f p50=%.0f p75=%.0f",
+            "@%s scrape done: %d reels | p10=%.0f p25=%.0f p50=%.0f p75=%.0f",
             handle, stats.count, stats.p10, stats.p25, stats.p50, stats.p75,
         )
         return stats
@@ -169,7 +174,7 @@ async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
 
 
 def scrape_creator_reels(handle: str) -> Optional[ScrapedStats]:
-    """Synchronous wrapper for use in the negotiation engine."""
+    """Synchronous wrapper — safe to call from the negotiation engine."""
     return asyncio.run(scrape_creator_reels_async(handle))
 
 
