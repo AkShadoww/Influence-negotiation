@@ -43,6 +43,16 @@ RISK_BUFFER = float(os.getenv("RISK_BUFFER", "0.20"))   # 20% risk deduction
 NUM_VIDEOS = int(os.getenv("NUM_VIDEOS", "2"))
 BONUS_PERCENTAGE = float(os.getenv("BONUS_PERCENTAGE", "0.20"))   # 20% bonus on flat
 
+# Max CPM cap used when generating the 6 AI-suggested offers.
+# Can be overridden per-campaign via the outreach dashboard (OUTREACH_API_URL).
+# Defaults to TARGET_CPM so legacy behaviour is unchanged.
+MAX_CPM = float(os.getenv("MAX_CPM", str(TARGET_CPM)))
+
+# Outreach Email Automation integration
+# Set OUTREACH_API_URL to enable pushing IG data + offers to the dashboard.
+OUTREACH_API_URL = os.getenv("OUTREACH_API_URL", "")
+OUTREACH_API_TOKEN = os.getenv("OUTREACH_API_TOKEN", "")
+
 # Reference accounts shown in Reply 1
 REFERENCE_ACCOUNTS = [
     ("@danyel.design", "300k+ views"),

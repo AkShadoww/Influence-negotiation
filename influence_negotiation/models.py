@@ -41,6 +41,8 @@ class Creator:
     scraped_p50: Optional[float] = None
     scraped_p75: Optional[float] = None
     scraped_reel_count: Optional[int] = None
+    scraped_min_views: Optional[int] = None      # lowest single-reel view count scraped
+    scraped_views_raw: Optional[str] = None      # JSON array of all scraped view counts
 
     # Computed offer (populated by pricing_engine)
     quoted_rate: Optional[float] = None
@@ -52,6 +54,9 @@ class Creator:
     our_offer_c_price: Optional[float] = None
     budget_cap: Optional[float] = None
     video_count: Optional[int] = None
+
+    # 6 AI-suggested offers (JSON array stored as string)
+    suggested_offers_json: Optional[str] = None
 
     follow_up_count: int = 0
     last_email_sent_at: Optional[datetime] = None
