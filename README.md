@@ -4,7 +4,7 @@ Automated email-based negotiation funnel for Instagram creator brand deals.
 
 ## How It Works
 
-1. A creator is seeded into the system (via `seed.py`) after they express interest from the outreach phase.
+1. A creator enters the funnel one of two ways: **automatically** — each poll tick the worker pulls `status='replied'` creators from the outreach dashboard (`GET /api/negotiation/replied`) and seeds any new ones (Claude reads their reply; decliners are closed, everyone else gets Reply 1) — or **manually** via `seed.py`. Auto-import is controlled by `AUTO_IMPORT_REPLIED` (default on) and requires `OUTREACH_API_URL`.
 2. The backend scrapes the creator's Instagram Reels page (opens a Chrome tab, collects 12 view counts, closes the tab).
 3. **Reply 1** (brand collab details) is sent automatically and the system waits for their rate.
 4. When the creator replies with their rate, CPM-based pricing is computed from the scraped view stats and **Reply 2** (offer) is sent.

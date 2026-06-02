@@ -57,6 +57,8 @@ def process_new_emails() -> None:
 
 
 def run_once() -> None:
+    negotiation_engine.import_replied_creators()   # pull creators who replied to outreach
+    _send_initial_reply1()                         # Reply 1 for any new INTERESTED creators
     process_new_emails()
     negotiation_engine.process_pending_approvals()
     negotiation_engine.run_followups()
@@ -65,9 +67,6 @@ def run_once() -> None:
 def main() -> None:
     logger.info("Initialising database...")
     state_store.init_db()
-
-    # Handle newly seeded INTERESTED creators (no thread yet — Reply 1 must come first)
-    _send_initial_reply1()
 
     logger.info("Starting polling loop (interval=%dm)", POLL_INTERVAL_MINUTES)
     while True:

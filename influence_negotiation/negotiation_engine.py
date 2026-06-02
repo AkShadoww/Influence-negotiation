@@ -133,6 +133,70 @@ def _compute_and_push_offers(creator: Creator, stats: ScrapedStats) -> None:
 # Entry points
 # ──────────────────────────────────────────────
 
+def import_replied_creators() -> None:
+    """
+    Pull creators who replied to outreach from the dashboard and seed any new
+    ones into the funnel. Claude reads each creator's reply: if they declined,
+    the negotiation is closed immediately; otherwise we kick off Reply 1.
+
+    De-duped by email — creators already in our DB are skipped, so this is safe
+    to run every poll tick.
+    """
+    if not config.AUTO_IMPORT_REPLIED:
+        return
+
+    items = outreach_sync.fetch_replied_creators()
+    if not items:
+        return
+
+    imported = 0
+    for item in items:
+        email = (item.get("email") or "").strip()
+        thread_id = (item.get("outreach_thread_id") or "").strip()
+        if not email or not thread_id:
+            continue
+        if state_store.get_creator(email):
+            continue  # already in the funnel
+
+        name = (item.get("first_name") or item.get("full_name") or email.split("@")[0]).strip()
+        handle = item.get("instagram_username") or None
+
+        creator = state_store.seed_creator(
+            creator_email=email,
+            creator_name=name,
+            instagram_handle=handle,
+            brand_name=item.get("brand_name"),
+        )
+        creator.gmail_thread_id = thread_id
+        state_store.upsert_creator(creator)
+
+        # Read their outreach reply with Claude before pitching, so we don't
+        # send a collab pitch to someone who declined. Then mark it read so the
+        # main loop doesn't re-classify it.
+        intent = EmailIntent.UNKNOWN
+        try:
+            msgs = gmail_client.get_unread_messages_in_thread(thread_id)
+            if msgs:
+                intent, _, _ = classify_email(msgs[0]["body"], creator.creator_name)
+            for m in msgs:
+                gmail_client.mark_as_read(m["id"])
+        except Exception as e:
+            logger.warning("Could not read/mark thread %s for %s: %s", thread_id, email, e)
+
+        if intent == EmailIntent.NOT_INTERESTED:
+            creator.state = NegotiationState.CLOSED
+            state_store.upsert_creator(creator)
+            logger.info("Imported %s but they declined in outreach — closed", email)
+            continue
+
+        logger.info("Imported replied creator %s (@%s) — starting funnel", email, handle or "—")
+        handle_new_interest(creator)  # pre-scrape, push offers, send Reply 1 → AWAITING_RATE
+        imported += 1
+
+    if imported:
+        logger.info("Imported %d new replied creator(s) into the negotiation funnel", imported)
+
+
 def handle_new_interest(creator: Creator) -> None:
     """
     Called when a creator is first seeded as INTERESTED.

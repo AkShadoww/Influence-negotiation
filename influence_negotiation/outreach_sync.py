@@ -25,6 +25,29 @@ def _auth_headers() -> dict:
     return headers
 
 
+def fetch_replied_creators() -> List[dict]:
+    """
+    Pull creators who replied to outreach and are ready to enter the negotiation
+    funnel (GET /api/negotiation/replied).
+
+    Each item: {id, email, first_name, full_name, instagram_username,
+                outreach_thread_id, brand_name, campaign_name, ...}
+
+    Returns [] if sync is disabled or the call fails.
+    """
+    if not OUTREACH_API_URL:
+        return []
+    try:
+        url = f"{OUTREACH_API_URL.rstrip('/')}/api/negotiation/replied"
+        resp = requests.get(url, headers=_auth_headers(), timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("creators", []) if isinstance(data, dict) else []
+    except Exception as e:
+        logger.warning("Outreach replied-creators fetch failed: %s", e)
+        return []
+
+
 def fetch_campaign_offer(
     instagram_handle: Optional[str],
     brand_name: Optional[str] = None,
