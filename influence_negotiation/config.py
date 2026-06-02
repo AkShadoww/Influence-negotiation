@@ -58,6 +58,13 @@ MAX_CPM = float(os.getenv("MAX_CPM", str(TARGET_CPM)))
 OUTREACH_API_URL = os.getenv("OUTREACH_API_URL", "")
 OUTREACH_API_TOKEN = os.getenv("OUTREACH_API_TOKEN", "")
 
+# Auto-import creators who replied to outreach.
+# When True, each poll tick the worker pulls creators with status='replied' from
+# the outreach dashboard (GET /api/negotiation/replied) and seeds any it hasn't
+# seen into the funnel — so a creator replying to outreach automatically enters
+# negotiation. De-duped by email. Requires OUTREACH_API_URL to be set.
+AUTO_IMPORT_REPLIED = os.getenv("AUTO_IMPORT_REPLIED", "true").lower() == "true"
+
 # Human-in-the-loop approval gate.
 # When True, after a creator shares their rate the worker computes + pushes the
 # 6 offers and then WAITS for an admin to approve one in the outreach dashboard
