@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import config
 import gmail_client
 import instagram_scraper
 import outreach_sync
@@ -92,15 +93,31 @@ def _scrape_and_store(creator: Creator) -> Optional[ScrapedStats]:
     return stats
 
 
+def _campaign_info(creator: Creator) -> Optional[dict]:
+    """Pull the campaign's max_cpm + admin-approved offer from the outreach dashboard."""
+    return outreach_sync.fetch_campaign_offer(creator.instagram_handle, creator.brand_name)
+
+
+def _effective_max_cpm(info: Optional[dict]) -> float:
+    """Per-campaign max_cpm from the dashboard, falling back to the env default."""
+    if info and info.get("max_cpm") is not None:
+        try:
+            return float(info["max_cpm"])
+        except (TypeError, ValueError):
+            pass
+    return MAX_CPM
+
+
 def _compute_and_push_offers(creator: Creator, stats: ScrapedStats) -> None:
     """
     Generate 6 AI-suggested offers and push them to the outreach dashboard.
-    The max_cpm is read from env (overridable per-campaign in the outreach UI).
+    The max_cpm honors the campaign's dashboard setting when available, else env.
     """
     try:
+        max_cpm = _effective_max_cpm(_campaign_info(creator))
         offers = pricing_engine.compute_six_offers(
             stats=stats,
-            max_cpm=MAX_CPM,
+            max_cpm=max_cpm,
             creator_quoted_rate=creator.quoted_rate,
             brand_name=creator.brand_name,
         )
@@ -239,6 +256,27 @@ def _handle_rate_received(
         _send_and_update(creator, subject, body, NegotiationState.HIGH_RATE_REJECTED)
         return
 
+    # Decide what to email. Priority:
+    #   1. The exact offer an admin approved in the dashboard.
+    #   2. Hold for approval (if required + dashboard configured + creator known there).
+    #   3. Fall back to the computed Option A/B/C offer.
+    info = _campaign_info(creator)
+    approved = info.get("approved_offer") if info else None
+    if approved:
+        logger.info("Using admin-approved offer for %s", creator.creator_email)
+        _send_offer_email(creator, approved)
+        return
+
+    found_in_outreach = bool(info and info.get("found"))
+    if config.REQUIRE_OFFER_APPROVAL and config.OUTREACH_API_URL and found_in_outreach:
+        creator.state = NegotiationState.AWAITING_APPROVAL
+        state_store.upsert_creator(creator)
+        logger.info(
+            "Rate received for %s — holding for admin offer approval in dashboard",
+            creator.creator_email,
+        )
+        return
+
     subject, body = templates.reply2(
         creator_name=creator.creator_name,
         flat_rate=offer.option_b_flat,
@@ -260,6 +298,37 @@ def _handle_rate_received(
 def _handle_acceptance(creator: Creator) -> None:
     subject, body = templates.acceptance_confirmation(creator_name=creator.creator_name, **_brand_ctx(creator))
     _send_and_update(creator, subject, body, NegotiationState.ACCEPTED)
+
+
+def _send_offer_email(creator: Creator, offer: dict) -> None:
+    """Email the single offer an admin approved in the dashboard, then await the decision."""
+    subject, body = templates.reply2_approved(
+        creator_name=creator.creator_name,
+        offer=offer,
+        **_brand_ctx(creator),
+    )
+    _send_and_update(creator, subject, body, NegotiationState.AWAITING_DECISION, reset_followup=True)
+
+
+def process_pending_approvals() -> None:
+    """
+    For creators holding in AWAITING_APPROVAL, check whether an admin has approved
+    an offer in the outreach dashboard yet. If so, send Reply 2 with that offer.
+    Runs every poll tick alongside email processing.
+    """
+    creators = [
+        c for c in state_store.get_active_creators()
+        if c.state == NegotiationState.AWAITING_APPROVAL
+    ]
+    if not creators:
+        return
+    logger.info("Approval check: %d creator(s) awaiting admin approval", len(creators))
+    for creator in creators:
+        info = _campaign_info(creator)
+        approved = info.get("approved_offer") if info else None
+        if approved:
+            logger.info("Offer approved for %s — sending Reply 2", creator.creator_email)
+            _send_offer_email(creator, approved)
 
 
 # ──────────────────────────────────────────────

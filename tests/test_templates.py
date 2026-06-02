@@ -61,3 +61,42 @@ def test_followup_and_terminal_templates_respect_brand():
         creator_name="Dev", quoted_rate=5000, brand_name="Initech",
     )
     assert subject == "Re: Initech x Dev Collaboration"
+
+
+def test_reply2_approved_view_based_offer():
+    offer = {
+        "offer_type": "view_based",
+        "flat_fee": 1125,
+        "view_guarantee": 75_000,
+        "label": "Standard View Deal",
+    }
+    subject, body = templates.reply2_approved(
+        "Alice", offer, brand_name="Acme", manager_name="Dana",
+    )
+    assert subject == "Re: Acme x Alice Collaboration"
+    assert "$1,125" in body
+    assert "75,000 combined total views" in body
+    assert "150,000 views" in body  # view_guarantee * 2
+    assert "engaging content around Acme" in body
+    assert body.strip().endswith("- Dana")
+
+
+def test_reply2_approved_video_flat_offer():
+    offer = {
+        "offer_type": "video_flat",
+        "flat_fee": 960,
+        "num_videos": 2,
+        "flat_per_video": 480,
+    }
+    subject, body = templates.reply2_approved("Bob", offer, brand_name="Acme")
+    assert subject == "Re: Acme x Bob Collaboration"
+    assert "2 Videos Package" in body
+    assert "$960 flat for 2 videos" in body
+    assert "$480 each" in body
+
+
+def test_reply2_approved_falls_back_to_default_brand():
+    offer = {"offer_type": "video_based", "flat_fee": 500, "num_videos": 1, "flat_per_video": 500}
+    subject, body = templates.reply2_approved("Cara", offer)
+    assert subject == f"Re: {DEFAULT_BRAND_NAME} x Cara Collaboration"
+    assert "1 Video Package" in body

@@ -14,11 +14,29 @@ Automated email-based negotiation funnel for Instagram creator brand deals.
 ## Negotiation States
 
 ```
-INTERESTED → REPLY1_SENT → AWAITING_RATE → OFFER_SENT → AWAITING_DECISION → ACCEPTED
-                                                                           → HIGH_RATE_REJECTED
-                                                                           → DELAYED
-                                                                           → CLOSED
+INTERESTED → AWAITING_RATE → AWAITING_APPROVAL → AWAITING_DECISION → ACCEPTED
+                                  (admin approves)                  → HIGH_RATE_REJECTED
+                                                                    → DELAYED
+                                                                    → CLOSED
 ```
+
+## Offer Approval (human-in-the-loop)
+
+When a creator shares their rate, the worker scrapes/refreshes their Instagram
+stats, computes the 6 suggested offers, and **pushes them to the outreach
+dashboard** (honoring that campaign's `max_cpm`). If `REQUIRE_OFFER_APPROVAL=true`
+(default), the creator is parked in `AWAITING_APPROVAL` and **no offer email is
+sent yet**.
+
+An admin then opens the dashboard's *Creator Negotiation* view, picks (and
+optionally edits) one of the 6 offers, and saves. On the next poll tick the
+worker pulls that approved offer back (`GET /api/negotiation/offer`) and sends
+**Reply 2 built from the exact offer the admin approved**.
+
+Set `REQUIRE_OFFER_APPROVAL=false` to skip the gate and send Reply 2 immediately
+(using an approved offer if one already exists, otherwise the computed Option
+A/B/C). The gate only applies when `OUTREACH_API_URL` is configured and the
+creator exists in the dashboard.
 
 ## Pricing (CPM-based)
 
