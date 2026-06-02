@@ -29,6 +29,14 @@ def _now() -> datetime:
     return datetime.now(_UTC)
 
 
+def _brand_ctx(creator: Creator) -> dict:
+    """Per-campaign branding for email templates. None values fall back to config defaults."""
+    return {
+        "brand_name": creator.brand_name,
+        "campaign_deadline": creator.campaign_deadline,
+    }
+
+
 def _send_and_update(
     creator: Creator,
     subject: str,
@@ -94,6 +102,7 @@ def _compute_and_push_offers(creator: Creator, stats: ScrapedStats) -> None:
             stats=stats,
             max_cpm=MAX_CPM,
             creator_quoted_rate=creator.quoted_rate,
+            brand_name=creator.brand_name,
         )
         offers_list = pricing_engine.offers_to_dict_list(offers)
         creator.suggested_offers_json = json.dumps(offers_list)
@@ -119,7 +128,7 @@ def handle_new_interest(creator: Creator) -> None:
         if stats:
             _compute_and_push_offers(creator, stats)
 
-    subject, body = templates.reply1(creator_name=creator.creator_name)
+    subject, body = templates.reply1(creator_name=creator.creator_name, **_brand_ctx(creator))
     _send_and_update(creator, subject, body, NegotiationState.AWAITING_RATE, reset_followup=True)
 
 
@@ -144,13 +153,13 @@ def handle_incoming_email(creator: Creator, email_body: str) -> None:
         return
 
     if intent == EmailIntent.DELAY_REQUEST:
-        subject, body = templates.delay_email(creator_name=creator.creator_name)
+        subject, body = templates.delay_email(creator_name=creator.creator_name, **_brand_ctx(creator))
         _send_and_update(creator, subject, body, NegotiationState.DELAYED)
         return
 
     if intent == EmailIntent.ASKING_DETAILS:
         if creator.state in (NegotiationState.AWAITING_RATE, NegotiationState.REPLY1_SENT):
-            subject, body = templates.reply1(creator_name=creator.creator_name)
+            subject, body = templates.reply1(creator_name=creator.creator_name, **_brand_ctx(creator))
             _send_and_update(creator, subject, body, NegotiationState.AWAITING_RATE, reset_followup=True)
         return
 
@@ -205,7 +214,9 @@ def _handle_rate_received(
     _compute_and_push_offers(creator, stats)
 
     try:
-        offer: PriceOffer = pricing_engine.compute_offer_with_claude_review(stats, num_videos=NUM_VIDEOS)
+        offer: PriceOffer = pricing_engine.compute_offer_with_claude_review(
+            stats, num_videos=NUM_VIDEOS, brand_name=creator.brand_name,
+        )
     except Exception as e:
         logger.error("Pricing failed for %s: %s", creator.creator_email, e)
         return
@@ -223,6 +234,7 @@ def _handle_rate_received(
         subject, body = templates.high_rate_rejection(
             creator_name=creator.creator_name,
             quoted_rate=extracted_rate,
+            **_brand_ctx(creator),
         )
         _send_and_update(creator, subject, body, NegotiationState.HIGH_RATE_REJECTED)
         return
@@ -236,6 +248,7 @@ def _handle_rate_received(
         view_target=offer.option_c_guarantee_views,
         avg_views=int(stats.p50),
         video_count=offer.video_count,
+        **_brand_ctx(creator),
     )
     _send_and_update(
         creator, subject, body,
@@ -245,7 +258,7 @@ def _handle_rate_received(
 
 
 def _handle_acceptance(creator: Creator) -> None:
-    subject, body = templates.acceptance_confirmation(creator_name=creator.creator_name)
+    subject, body = templates.acceptance_confirmation(creator_name=creator.creator_name, **_brand_ctx(creator))
     _send_and_update(creator, subject, body, NegotiationState.ACCEPTED)
 
 
@@ -270,10 +283,10 @@ def run_followups() -> None:
             continue
 
         if creator.state == NegotiationState.AWAITING_RATE:
-            subject, body = templates.followup1(creator_name=creator.creator_name)
+            subject, body = templates.followup1(creator_name=creator.creator_name, **_brand_ctx(creator))
             new_state = NegotiationState.AWAITING_RATE
         elif creator.state == NegotiationState.AWAITING_DECISION:
-            subject, body = templates.followup2(creator_name=creator.creator_name)
+            subject, body = templates.followup2(creator_name=creator.creator_name, **_brand_ctx(creator))
             new_state = NegotiationState.AWAITING_DECISION
         else:
             continue

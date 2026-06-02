@@ -24,10 +24,14 @@ POLL_INTERVAL_MINUTES = int(os.getenv("POLL_INTERVAL_MINUTES", "15"))
 FOLLOWUP_DELAY_DAYS = int(os.getenv("FOLLOWUP_DELAY_DAYS", "2"))
 MAX_FOLLOWUPS_PER_STAGE = int(os.getenv("MAX_FOLLOWUPS_PER_STAGE", "2"))
 
-# Campaign
-MANAGER_NAME = os.getenv("MANAGER_NAME", "Jennifer")
-BRAND_NAME = os.getenv("BRAND_NAME", "Reve")
-CAMPAIGN_DEADLINE = os.getenv("CAMPAIGN_DEADLINE", "February 05, 2026")
+# Campaign defaults.
+# These are FALLBACKS only. Brand name and deadline are per-campaign and are
+# stored per-creator (set at seed time via seed.py --brand / --deadline, or
+# sourced from the originating outreach campaign). A creator's own values take
+# precedence; these env vars are used only when a creator was seeded without them.
+DEFAULT_MANAGER_NAME = os.getenv("MANAGER_NAME", "Jennifer")
+DEFAULT_BRAND_NAME = os.getenv("BRAND_NAME", "Reve")
+DEFAULT_CAMPAIGN_DEADLINE = os.getenv("CAMPAIGN_DEADLINE", "February 05, 2026")
 
 # Instagram Scraper (Playwright)
 # Auth file is written by startup.py from INSTAGRAM_AUTH_B64 env var
