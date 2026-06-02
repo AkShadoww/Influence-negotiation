@@ -8,7 +8,7 @@ Safe to disable: if OUTREACH_API_URL is unset, this is a no-op.
 
 import json
 import logging
-from typing import List
+from typing import List, Optional
 
 import requests
 
@@ -16,6 +16,55 @@ from config import OUTREACH_API_TOKEN, OUTREACH_API_URL
 from models import Creator
 
 logger = logging.getLogger(__name__)
+
+
+def _auth_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    if OUTREACH_API_TOKEN:
+        headers["x-bot-token"] = OUTREACH_API_TOKEN
+    return headers
+
+
+def fetch_campaign_offer(
+    instagram_handle: Optional[str],
+    brand_name: Optional[str] = None,
+) -> Optional[dict]:
+    """
+    Pull the campaign's admin-configured max_cpm and the admin's approved offer
+    for this creator from the outreach dashboard (GET /api/negotiation/offer).
+
+    Matched by instagram_handle, optionally narrowed by brand_name when the
+    handle appears in multiple campaigns.
+
+    Returns a dict like:
+        {
+          "found": bool,
+          "max_cpm": float | None,
+          "approved_offer": dict | None,   # the admin's selected/edited offer
+          "selected_offer_id": str | None,
+          "quoted_rate": float | None,
+          "campaign": {...},
+        }
+    or None if sync is disabled, the creator has no handle, or the call fails.
+    """
+    if not OUTREACH_API_URL or not instagram_handle:
+        return None
+
+    params = {"instagram_handle": instagram_handle}
+    if brand_name:
+        params["brand_name"] = brand_name
+
+    try:
+        url = f"{OUTREACH_API_URL.rstrip('/')}/api/negotiation/offer"
+        resp = requests.get(url, params=params, headers=_auth_headers(), timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data.get("found"):
+            return data  # {"ok": True, "found": False}
+        return data
+    except Exception as e:
+        logger.warning("Outreach offer fetch failed for @%s: %s", instagram_handle, e)
+        return None
 
 
 def push_creator_data(creator: Creator, suggested_offers: List[dict]) -> bool:
@@ -45,13 +94,9 @@ def push_creator_data(creator: Creator, suggested_offers: List[dict]) -> bool:
         "suggested_offers": suggested_offers,
     }
 
-    headers = {"Content-Type": "application/json"}
-    if OUTREACH_API_TOKEN:
-        headers["x-bot-token"] = OUTREACH_API_TOKEN
-
     try:
         url = f"{OUTREACH_API_URL.rstrip('/')}/api/negotiation/push"
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        resp = requests.post(url, json=payload, headers=_auth_headers(), timeout=10)
         resp.raise_for_status()
         logger.info(
             "Synced @%s to outreach dashboard (%d offers)",

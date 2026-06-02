@@ -58,6 +58,7 @@ def process_new_emails() -> None:
 
 def run_once() -> None:
     process_new_emails()
+    negotiation_engine.process_pending_approvals()
     negotiation_engine.run_followups()
 
 
