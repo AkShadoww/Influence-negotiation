@@ -8,6 +8,7 @@ class NegotiationState(str, Enum):
     INTERESTED = "INTERESTED"
     REPLY1_SENT = "REPLY1_SENT"
     AWAITING_RATE = "AWAITING_RATE"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"  # rate received; waiting for admin to approve an offer
     OFFER_SENT = "OFFER_SENT"
     AWAITING_DECISION = "AWAITING_DECISION"
     ACCEPTED = "ACCEPTED"

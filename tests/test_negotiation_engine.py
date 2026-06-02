@@ -137,3 +137,87 @@ def test_no_scraped_data_no_offer_sent():
             negotiation_engine.handle_incoming_email(creator, "My rate is $500.")
 
     gmail_client.send_reply.assert_not_called()
+
+
+# ── Offer approval gate ──────────────────────────────────────────────────────
+
+def test_rate_with_approved_offer_emails_it():
+    """If the admin has already approved an offer, Reply 2 uses it immediately."""
+    import gmail_client
+    import state_store
+    gmail_client.send_reply = MagicMock()
+    state_store.upsert_creator = MagicMock()
+
+    info = {"found": True, "approved_offer": {
+        "offer_type": "video_flat", "flat_fee": 960, "num_videos": 2, "flat_per_video": 480,
+    }}
+    with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 500.0, "rate")), \
+         patch("pricing_engine.compute_offer_with_claude_review", return_value=_mock_offer()), \
+         patch.object(negotiation_engine, "_compute_and_push_offers"), \
+         patch.object(negotiation_engine, "_campaign_info", return_value=info):
+        creator = _make_creator()
+        negotiation_engine.handle_incoming_email(creator, "My rate is $500.")
+
+    gmail_client.send_reply.assert_called_once()
+    assert creator.state == NegotiationState.AWAITING_DECISION
+
+
+def test_rate_holds_for_approval_when_required():
+    """With approval required and no offer approved yet, no email is sent and we wait."""
+    import gmail_client
+    import state_store
+    gmail_client.send_reply = MagicMock()
+    state_store.upsert_creator = MagicMock()
+
+    info = {"found": True, "approved_offer": None}
+    with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 500.0, "rate")), \
+         patch("pricing_engine.compute_offer_with_claude_review", return_value=_mock_offer()), \
+         patch.object(negotiation_engine, "_compute_and_push_offers"), \
+         patch.object(negotiation_engine, "_campaign_info", return_value=info), \
+         patch("config.REQUIRE_OFFER_APPROVAL", True), \
+         patch("config.OUTREACH_API_URL", "http://dashboard"):
+        creator = _make_creator()
+        negotiation_engine.handle_incoming_email(creator, "My rate is $500.")
+
+    gmail_client.send_reply.assert_not_called()
+    assert creator.state == NegotiationState.AWAITING_APPROVAL
+
+
+def test_rate_sends_legacy_offer_when_approval_disabled():
+    """With approval disabled and nothing approved, fall back to computed Option A/B/C."""
+    import gmail_client
+    import state_store
+    gmail_client.send_reply = MagicMock()
+    state_store.upsert_creator = MagicMock()
+
+    info = {"found": True, "approved_offer": None}
+    with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 500.0, "rate")), \
+         patch("pricing_engine.compute_offer_with_claude_review", return_value=_mock_offer()), \
+         patch.object(negotiation_engine, "_compute_and_push_offers"), \
+         patch.object(negotiation_engine, "_campaign_info", return_value=info), \
+         patch("config.REQUIRE_OFFER_APPROVAL", False):
+        creator = _make_creator()
+        negotiation_engine.handle_incoming_email(creator, "My rate is $500.")
+
+    gmail_client.send_reply.assert_called_once()
+    assert creator.state == NegotiationState.AWAITING_DECISION
+
+
+def test_process_pending_approvals_sends_when_approved():
+    """A held creator gets Reply 2 once an admin approves an offer."""
+    import gmail_client
+    import state_store
+    gmail_client.send_reply = MagicMock()
+    state_store.upsert_creator = MagicMock()
+
+    creator = _make_creator(state=NegotiationState.AWAITING_APPROVAL)
+    state_store.get_active_creators = MagicMock(return_value=[creator])
+
+    info = {"found": True, "approved_offer": {
+        "offer_type": "view_based", "flat_fee": 1125, "view_guarantee": 75_000,
+    }}
+    with patch.object(negotiation_engine, "_campaign_info", return_value=info):
+        negotiation_engine.process_pending_approvals()
+
+    gmail_client.send_reply.assert_called_once()
+    assert creator.state == NegotiationState.AWAITING_DECISION

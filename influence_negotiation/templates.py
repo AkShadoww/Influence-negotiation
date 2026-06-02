@@ -127,6 +127,66 @@ Would love to work together and land on something that works well for both sides
     return subject, body
 
 
+def reply2_approved(
+    creator_name: str,
+    offer: dict,
+    brand_name: Optional[str] = None,
+    manager_name: Optional[str] = None,
+    **kwargs,
+) -> Tuple[str, str]:
+    """
+    Offer email built from the single offer an admin approved in the outreach
+    dashboard (the creator's custom_offer). Used instead of the computed
+    Option A/B/C reply2 when an approved offer is available.
+    """
+    brand_name = brand_name or DEFAULT_BRAND_NAME
+    manager_name = manager_name or DEFAULT_MANAGER_NAME
+    subject = f"Re: {brand_name} x {creator_name} Collaboration"
+
+    offer = offer or {}
+    offer_type = str(offer.get("offer_type") or "")
+    flat_fee = float(offer.get("flat_fee") or 0)
+
+    if offer_type == "view_based":
+        views = int(float(offer.get("view_guarantee") or 0))
+        deal_block = f"""Here's what we'd love to propose:
+
+View-Based Offer (${flat_fee:,.0f})
+• ${flat_fee:,.0f} for a minimum of {views:,} combined total views on Instagram.
+• Views can come from a single video or multiple posts — combined total views will be counted. So if the first video ends up crossing {views * 2:,} views, you don't have to upload further videos!
+• Views counted for 7 days from each post's publish date.
+• Full creative freedom — you can create engaging content around {brand_name} without the content feeling like an ad!
+• No ad rights or exclusivity required."""
+    else:
+        num_videos = int(float(offer.get("num_videos") or 1))
+        raw_per = offer.get("flat_per_video")
+        per_video = (
+            float(raw_per) if raw_per not in (None, "")
+            else (flat_fee / num_videos if num_videos else flat_fee)
+        )
+        plural = "s" if num_videos != 1 else ""
+        deal_block = f"""Here's what we'd love to propose:
+
+{num_videos} Video{plural} Package (${flat_fee:,.0f})
+• ${flat_fee:,.0f} flat for {num_videos} video{plural} (about ${per_video:,.0f} each).
+• Full creative freedom — you can create engaging content around {brand_name} without the content feeling like an ad!
+• No ad rights or exclusivity required."""
+
+    body = f"""Hi {creator_name},
+
+Thanks for sharing your rates!
+
+{deal_block}
+
+Payment details
+We do direct bank transfers. Payment will be initiated within 7 working days of completing and posting all the agreed deliverables!
+
+Would love to work together and land on something that works well for both sides! Let me know your thoughts :)
+
+- {manager_name}"""
+    return subject, body
+
+
 def followup2(
     creator_name: str,
     brand_name: Optional[str] = None,
