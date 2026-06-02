@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS negotiations (
     gmail_thread_id             TEXT,
     instagram_handle            TEXT,
 
+    -- Per-campaign branding (NULL → fall back to config DEFAULT_*)
+    brand_name                  TEXT,
+    campaign_deadline           TEXT,
+
     -- Scraped Instagram stats
     scraped_p10                 NUMERIC(12,2),
     scraped_p25                 NUMERIC(12,2),
@@ -60,6 +64,8 @@ _MIGRATIONS = [
     "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS scraped_min_views INTEGER",
     "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS scraped_views_raw TEXT",
     "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS suggested_offers_json TEXT",
+    "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS brand_name TEXT",
+    "ALTER TABLE negotiations ADD COLUMN IF NOT EXISTS campaign_deadline TEXT",
 ]
 
 
@@ -98,6 +104,8 @@ def _row_to_creator(row: dict) -> Creator:
         state=NegotiationState(row["state"]),
         gmail_thread_id=row.get("gmail_thread_id"),
         instagram_handle=row.get("instagram_handle"),
+        brand_name=row.get("brand_name"),
+        campaign_deadline=row.get("campaign_deadline"),
         scraped_p10=_f(row, "scraped_p10"),
         scraped_p25=_f(row, "scraped_p25"),
         scraped_p50=_f(row, "scraped_p50"),
@@ -128,6 +136,7 @@ def upsert_creator(creator: Creator) -> None:
             """
             INSERT INTO negotiations (
                 creator_email, creator_name, state, gmail_thread_id, instagram_handle,
+                brand_name, campaign_deadline,
                 scraped_p10, scraped_p25, scraped_p50, scraped_p75, scraped_reel_count,
                 scraped_min_views, scraped_views_raw,
                 quoted_rate, our_offer_flat_per_video,
@@ -137,6 +146,7 @@ def upsert_creator(creator: Creator) -> None:
                 follow_up_count, last_email_sent_at, created_at, updated_at
             ) VALUES (
                 %(creator_email)s, %(creator_name)s, %(state)s, %(gmail_thread_id)s, %(instagram_handle)s,
+                %(brand_name)s, %(campaign_deadline)s,
                 %(scraped_p10)s, %(scraped_p25)s, %(scraped_p50)s, %(scraped_p75)s, %(scraped_reel_count)s,
                 %(scraped_min_views)s, %(scraped_views_raw)s,
                 %(quoted_rate)s, %(our_offer_flat_per_video)s,
@@ -150,6 +160,8 @@ def upsert_creator(creator: Creator) -> None:
                 state = EXCLUDED.state,
                 gmail_thread_id = EXCLUDED.gmail_thread_id,
                 instagram_handle = EXCLUDED.instagram_handle,
+                brand_name = EXCLUDED.brand_name,
+                campaign_deadline = EXCLUDED.campaign_deadline,
                 scraped_p10 = EXCLUDED.scraped_p10,
                 scraped_p25 = EXCLUDED.scraped_p25,
                 scraped_p50 = EXCLUDED.scraped_p50,
@@ -177,6 +189,8 @@ def upsert_creator(creator: Creator) -> None:
                 "state": creator.state.value,
                 "gmail_thread_id": creator.gmail_thread_id,
                 "instagram_handle": creator.instagram_handle,
+                "brand_name": creator.brand_name,
+                "campaign_deadline": creator.campaign_deadline,
                 "scraped_p10": creator.scraped_p10,
                 "scraped_p25": creator.scraped_p25,
                 "scraped_p50": creator.scraped_p50,
@@ -242,14 +256,25 @@ def seed_creator(
     creator_email: str,
     creator_name: str,
     instagram_handle: str = None,
+    brand_name: str = None,
+    campaign_deadline: str = None,
 ) -> Creator:
-    """Add a creator to the funnel. Instagram stats will be scraped automatically."""
+    """Add a creator to the funnel. Instagram stats will be scraped automatically.
+
+    brand_name / campaign_deadline are the campaign this creator belongs to.
+    Leave them None to fall back to the config DEFAULT_* values.
+    """
     creator = Creator(
         creator_email=creator_email,
         creator_name=creator_name,
         state=NegotiationState.INTERESTED,
         instagram_handle=instagram_handle,
+        brand_name=brand_name,
+        campaign_deadline=campaign_deadline,
     )
     upsert_creator(creator)
-    logger.info("Seeded creator %s (%s) @%s", creator_name, creator_email, instagram_handle or "—")
+    logger.info(
+        "Seeded creator %s (%s) @%s | brand=%s",
+        creator_name, creator_email, instagram_handle or "—", brand_name or "(default)",
+    )
     return creator

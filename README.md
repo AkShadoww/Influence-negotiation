@@ -66,10 +66,17 @@ python influence_negotiation/seed.py \
   --email creator@example.com \
   --name "Alice" \
   --handle alicedesigns \
-  --thread_id <gmail_thread_id_from_outreach>
+  --thread_id <gmail_thread_id_from_outreach> \
+  --brand "Acme" \
+  --deadline "March 15, 2026"
 ```
 
 The Gmail thread ID comes from the existing outreach email thread (visible in Gmail URL).
+
+`--brand` / `--deadline` set the campaign this creator belongs to, so one backend
+can run deals for many brands at once. They're stored per-creator and used in that
+creator's emails. Omit them to fall back to `BRAND_NAME` / `CAMPAIGN_DEADLINE` from
+the environment (`config.DEFAULT_*`).
 
 ### 7. Run
 ```bash

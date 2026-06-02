@@ -19,7 +19,7 @@ import anthropic
 from config import (
     ANTHROPIC_API_KEY,
     BONUS_PERCENTAGE,
-    BRAND_NAME,
+    DEFAULT_BRAND_NAME,
     CLAUDE_MODEL,
     NUM_VIDEOS,
     RISK_BUFFER,
@@ -139,17 +139,22 @@ def compute_offer(stats: ScrapedStats, num_videos: int = NUM_VIDEOS) -> PriceOff
     return offer
 
 
-def compute_offer_with_claude_review(stats: ScrapedStats, num_videos: int = NUM_VIDEOS) -> PriceOffer:
+def compute_offer_with_claude_review(
+    stats: ScrapedStats,
+    num_videos: int = NUM_VIDEOS,
+    brand_name: Optional[str] = None,
+) -> PriceOffer:
     """
     Compute the CPM-based offer, then pass it to Claude for a sanity check.
     Claude may adjust the budget_cap or flag anomalies.
     Returns the (possibly adjusted) PriceOffer.
     """
+    brand_name = brand_name or DEFAULT_BRAND_NAME
     offer = compute_offer(stats, num_videos)
 
     system_prompt = f"""You are a pricing advisor for INFLUENCE, a social media marketing agency.
 You have been given a CPM-based price offer computed from an Instagram creator's scraped view statistics.
-Brand: {BRAND_NAME}. Target CPM: ${TARGET_CPM}. Risk buffer: {RISK_BUFFER*100:.0f}%.
+Brand: {brand_name}. Target CPM: ${TARGET_CPM}. Risk buffer: {RISK_BUFFER*100:.0f}%.
 
 Review the offer. If the numbers look reasonable, return them unchanged.
 If there is a clear anomaly (e.g. the creator has viral outliers inflating p75, or p25 is suspiciously low),
@@ -267,6 +272,7 @@ def compute_six_offers(
     stats: ScrapedStats,
     max_cpm: float,
     creator_quoted_rate: Optional[float] = None,
+    brand_name: Optional[str] = None,
 ) -> List[SuggestedOffer]:
     """
     Generate 6 AI-annotated deal offers constrained by max_cpm.
@@ -274,6 +280,7 @@ def compute_six_offers(
     Claude adds a strategic one-line note to each offer.
     Falls back to unannotated offers if the Claude call fails.
     """
+    brand_name = brand_name or DEFAULT_BRAND_NAME
     offers = _build_raw_six_offers(stats, max_cpm, creator_quoted_rate)
 
     summary_lines = []
@@ -292,7 +299,7 @@ def compute_six_offers(
     rate_ctx = f"${creator_quoted_rate:.2f}" if creator_quoted_rate else "not yet received"
 
     system_prompt = f"""You are a pricing strategist for INFLUENCE, a social media marketing agency.
-Brand: {BRAND_NAME}. Max CPM budget: ${max_cpm}. Risk buffer: {RISK_BUFFER*100:.0f}%.
+Brand: {brand_name}. Max CPM budget: ${max_cpm}. Risk buffer: {RISK_BUFFER*100:.0f}%.
 
 Review these 6 influencer deal offers and add a brief strategic note (max 15 words) for each.
 Focus on: budget efficiency, creator satisfaction, risk vs reward.
