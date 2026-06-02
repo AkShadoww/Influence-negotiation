@@ -35,6 +35,11 @@ class Creator:
     gmail_thread_id: Optional[str] = None
     instagram_handle: Optional[str] = None
 
+    # Per-campaign branding. When None, the config DEFAULT_* fallbacks are used.
+    # Lets one negotiation backend run deals for many brands/campaigns at once.
+    brand_name: Optional[str] = None
+    campaign_deadline: Optional[str] = None
+
     # Scraped Instagram stats (populated by instagram_scraper)
     scraped_p10: Optional[float] = None
     scraped_p25: Optional[float] = None

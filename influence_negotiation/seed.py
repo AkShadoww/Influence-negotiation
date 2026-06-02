@@ -7,8 +7,12 @@ Usage:
     --email edgar@example.com \
     --name Edgar \
     --handle edgardesigns \
-    --thread_id <gmail_thread_id>
+    --thread_id <gmail_thread_id> \
+    --brand "Acme" \
+    --deadline "March 15, 2026"
 
+--brand / --deadline set the campaign this creator belongs to. Omit them to use
+the config DEFAULT_BRAND_NAME / DEFAULT_CAMPAIGN_DEADLINE fallbacks.
 Optional --no-scrape flag skips scraping (useful for testing without Chrome).
 """
 
@@ -29,6 +33,8 @@ def main() -> None:
     parser.add_argument("--name", required=True, help="Creator's first name")
     parser.add_argument("--handle", default=None, help="Instagram handle (without @)")
     parser.add_argument("--thread_id", default=None, help="Gmail thread ID from existing outreach thread")
+    parser.add_argument("--brand", default=None, help="Brand/campaign name for this creator (defaults to DEFAULT_BRAND_NAME)")
+    parser.add_argument("--deadline", default=None, help="Campaign deadline shown in Reply 1 (defaults to DEFAULT_CAMPAIGN_DEADLINE)")
     parser.add_argument("--no-scrape", action="store_true", help="Skip Instagram scraping now (will scrape when Reply 1 is sent)")
     args = parser.parse_args()
 
@@ -37,6 +43,8 @@ def main() -> None:
         creator_email=args.email,
         creator_name=args.name,
         instagram_handle=args.handle,
+        brand_name=args.brand,
+        campaign_deadline=args.deadline,
     )
 
     if args.thread_id:
