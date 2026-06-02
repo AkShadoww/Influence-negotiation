@@ -53,9 +53,18 @@ BONUS_PERCENTAGE = float(os.getenv("BONUS_PERCENTAGE", "0.20"))   # 20% bonus on
 MAX_CPM = float(os.getenv("MAX_CPM", str(TARGET_CPM)))
 
 # Outreach Email Automation integration
-# Set OUTREACH_API_URL to enable pushing IG data + offers to the dashboard.
+# Set OUTREACH_API_URL to enable pushing IG data + offers to the dashboard,
+# and pulling the campaign's max_cpm + the admin's approved offer back.
 OUTREACH_API_URL = os.getenv("OUTREACH_API_URL", "")
 OUTREACH_API_TOKEN = os.getenv("OUTREACH_API_TOKEN", "")
+
+# Human-in-the-loop approval gate.
+# When True, after a creator shares their rate the worker computes + pushes the
+# 6 offers and then WAITS for an admin to approve one in the outreach dashboard
+# before sending Reply 2 (the offer email). When False, Reply 2 is sent
+# immediately — using the approved offer if one already exists, else the
+# computed Option A/B/C. Requires OUTREACH_API_URL to be set to have any effect.
+REQUIRE_OFFER_APPROVAL = os.getenv("REQUIRE_OFFER_APPROVAL", "true").lower() == "true"
 
 # Reference accounts shown in Reply 1
 REFERENCE_ACCOUNTS = [
