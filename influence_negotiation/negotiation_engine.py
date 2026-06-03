@@ -204,15 +204,13 @@ def import_replied_creators() -> None:
 def handle_new_interest(creator: Creator) -> None:
     """
     Called when a creator is first seeded as INTERESTED.
-    Sends Reply 1 and moves them to AWAITING_RATE.
-    Pre-scrapes Instagram so pricing is ready when they reply.
-    """
-    if creator.instagram_handle and not creator.scraped_p25:
-        logger.info("Pre-scraping @%s before sending Reply 1", creator.instagram_handle)
-        stats = _scrape_and_store(creator)
-        if stats:
-            _compute_and_push_offers(creator, stats)
+    Sends Reply 1 immediately and moves them to AWAITING_RATE.
 
+    Instagram is NOT scraped here. Every creator who replied to outreach gets
+    Reply 1 right away (a quick Gmail send), instead of each one waiting behind a
+    ~30-60s headless-Chrome scrape. The scrape happens lazily, per creator, when
+    they actually share their rate (in _handle_rate_received).
+    """
     subject, body = templates.reply1(creator_name=creator.creator_name, **_brand_ctx(creator))
     _send_and_update(creator, subject, body, NegotiationState.AWAITING_RATE, reset_followup=True)
 
