@@ -225,7 +225,7 @@ def test_process_pending_approvals_sends_when_approved():
 
 # ── Auto-import of replied creators (outreach → negotiation bridge) ───────────
 
-def test_import_replied_kicks_off_funnel():
+def test_import_replied_seeds_and_leaves_for_reply1():
     import state_store
     import gmail_client
     state_store.get_creator = MagicMock(return_value=None)
@@ -239,12 +239,13 @@ def test_import_replied_kicks_off_funnel():
             "outreach_thread_id": "T1", "brand_name": "Acme"}
     with patch.object(negotiation_engine.outreach_sync, "fetch_replied_creators", return_value=[item]), \
          patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.ASKING_DETAILS, None, "")), \
-         patch.object(negotiation_engine, "handle_new_interest") as new_interest, \
          patch("config.AUTO_IMPORT_REPLIED", True):
         negotiation_engine.import_replied_creators()
 
     state_store.seed_creator.assert_called_once()
-    new_interest.assert_called_once()
+    # Left INTERESTED with the thread set — the initial-reply step sends Reply 1 next.
+    assert seeded.state == NegotiationState.INTERESTED
+    assert seeded.gmail_thread_id == "T1"
     gmail_client.mark_as_read.assert_called_once_with("m1")
 
 
@@ -262,11 +263,9 @@ def test_import_replied_closes_decliner():
             "outreach_thread_id": "T2", "brand_name": "Acme"}
     with patch.object(negotiation_engine.outreach_sync, "fetch_replied_creators", return_value=[item]), \
          patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.NOT_INTERESTED, None, "")), \
-         patch.object(negotiation_engine, "handle_new_interest") as new_interest, \
          patch("config.AUTO_IMPORT_REPLIED", True):
         negotiation_engine.import_replied_creators()
 
-    new_interest.assert_not_called()
     assert seeded.state == NegotiationState.CLOSED
 
 
@@ -277,9 +276,24 @@ def test_import_replied_skips_existing():
 
     item = {"email": "exists@example.com", "outreach_thread_id": "T3"}
     with patch.object(negotiation_engine.outreach_sync, "fetch_replied_creators", return_value=[item]), \
-         patch.object(negotiation_engine, "handle_new_interest") as new_interest, \
          patch("config.AUTO_IMPORT_REPLIED", True):
         negotiation_engine.import_replied_creators()
 
     state_store.seed_creator.assert_not_called()
-    new_interest.assert_not_called()
+
+
+def test_import_replied_isolates_per_creator_errors():
+    """A failure on one creator must not abort the whole import."""
+    import state_store
+    import gmail_client
+    state_store.get_creator = MagicMock(return_value=None)
+    state_store.seed_creator = MagicMock(side_effect=RuntimeError("db blip"))
+    items = [
+        {"email": "a@example.com", "outreach_thread_id": "T1"},
+        {"email": "b@example.com", "outreach_thread_id": "T2"},
+    ]
+    with patch.object(negotiation_engine.outreach_sync, "fetch_replied_creators", return_value=items), \
+         patch("config.AUTO_IMPORT_REPLIED", True):
+        negotiation_engine.import_replied_creators()  # must not raise
+
+    assert state_store.seed_creator.call_count == 2  # tried both despite the first failing

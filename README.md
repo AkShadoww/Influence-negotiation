@@ -67,6 +67,10 @@ cp .env.example .env
 ### 3. Gmail OAuth2
 - Go to Google Cloud Console → Enable Gmail API → Create OAuth2 credentials (Desktop app) → download as `credentials.json`
 - First run opens a browser for OAuth consent; token saved to `token.json`
+- **On Railway** (no browser): generate `token.json` locally as above, then set
+  `GMAIL_TOKEN_B64` (and `GMAIL_CREDENTIALS_B64`) to the base64 of those files —
+  `startup.py` writes them to disk on boot. Without a valid `token.json` the worker
+  cannot read or send email. Use the **same Google account** as the outreach dashboard.
 
 ### 4. Instagram login
 Set `INSTAGRAM_USER_DATA_DIR` to a Chrome profile directory where you are already logged into Instagram:
