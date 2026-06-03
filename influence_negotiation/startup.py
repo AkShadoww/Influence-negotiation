@@ -35,6 +35,39 @@ def decode_auth() -> None:
         logger.error("Failed to decode INSTAGRAM_AUTH_B64: %s", e)
 
 
+def decode_gmail_auth() -> None:
+    """
+    Materialise Gmail OAuth files from base64 env vars (Railway has no browser to
+    run the OAuth flow). token.json is what makes Gmail work headlessly; generate
+    it once locally, then set GMAIL_TOKEN_B64 (and optionally GMAIL_CREDENTIALS_B64).
+    """
+    targets = [
+        ("GMAIL_CREDENTIALS_B64", os.getenv("GMAIL_CREDENTIALS_FILE", "credentials.json")),
+        ("GMAIL_TOKEN_B64", os.getenv("GMAIL_TOKEN_FILE", "token.json")),
+    ]
+    for env_name, path in targets:
+        b64 = os.getenv(env_name, "").strip()
+        if not b64:
+            continue
+        try:
+            decoded = base64.b64decode(b64)
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(decoded)
+            logger.info("Wrote %s from %s", path, env_name)
+        except Exception as e:
+            logger.error("Failed to decode %s: %s", env_name, e)
+
+    if not os.getenv("GMAIL_TOKEN_B64", "").strip():
+        logger.warning(
+            "GMAIL_TOKEN_B64 is not set — Gmail will fail (no token.json, and the "
+            "OAuth browser flow can't run on Railway). Generate token.json locally "
+            "and set GMAIL_TOKEN_B64. Sending/reading email is disabled until then."
+        )
+
+
 def install_playwright_browser() -> None:
     """Ensure Chromium is installed (Railway build may not have run playwright install)."""
     result = subprocess.run(
@@ -49,6 +82,7 @@ def install_playwright_browser() -> None:
 
 if __name__ == "__main__":
     decode_auth()
+    decode_gmail_auth()
     install_playwright_browser()
 
     # Hand off to main.py
