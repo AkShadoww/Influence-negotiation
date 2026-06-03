@@ -116,6 +116,53 @@ _EXTRACT_VIEWS_JS = """
 
 # ── Core scraping ─────────────────────────────────────────────────────────────
 
+async def _log_scrape_failure(page: Page, handle: str) -> None:
+    """Work out *why* a scrape returned no views and log a precise, actionable reason."""
+    try:
+        final_url = page.url
+        reel_links = await page.evaluate("() => document.querySelectorAll(\"a[href*='/reel/']\").length")
+        has_login_form = await page.evaluate(
+            "() => !!document.querySelector(\"input[name='username'], input[name='password']\")"
+        )
+        not_available = await page.evaluate(
+            "() => /isn't available|Sorry, this page|Page Not Found|Restricted/i"
+            ".test(document.body ? document.body.innerText : '')"
+        )
+    except Exception as e:
+        logger.error("@%s — no views, and failed to introspect the page: %s", handle, e)
+        return
+
+    if "/accounts/login" in final_url or "/login" in final_url or has_login_form:
+        logger.error(
+            "@%s — SESSION EXPIRED: Instagram is showing a login screen (url=%s). "
+            "Re-run login.py and update INSTAGRAM_AUTH_B64.", handle, final_url,
+        )
+    elif not_available:
+        logger.error(
+            "@%s — profile/reels page not available (private, renamed, or no reels). url=%s",
+            handle, final_url,
+        )
+    elif reel_links == 0:
+        logger.error(
+            "@%s — page loaded but 0 reel links found (url=%s). Either this account has no "
+            "reels, or Instagram changed the reels-grid markup (the a[href*='/reel/'] selector "
+            "needs updating).", handle, final_url,
+        )
+    else:
+        logger.error(
+            "@%s — found %d reel link(s) but extracted 0 view counts (url=%s). Instagram likely "
+            "moved the view-count element — the extraction selector needs updating.",
+            handle, reel_links, final_url,
+        )
+
+    if not SCRAPER_HEADLESS:  # local debugging aid
+        try:
+            await page.screenshot(path=f"ig_scrape_fail_{handle}.png")
+            logger.info("@%s — saved screenshot ig_scrape_fail_%s.png", handle, handle)
+        except Exception:
+            pass
+
+
 async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
     """
     Open a new tab, navigate to /@handle/reels, scroll to collect
@@ -132,6 +179,15 @@ async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
     try:
         await page.goto(url, timeout=SCRAPER_TIMEOUT_S * 1000, wait_until="domcontentloaded")
         await page.wait_for_timeout(3000)
+
+        # Fast-fail if the saved session is dead (Instagram bounces to login),
+        # instead of scrolling an empty page for the full timeout.
+        if "/accounts/login" in page.url or "/login" in page.url:
+            logger.error(
+                "@%s — SESSION EXPIRED: redirected to Instagram login (url=%s). "
+                "Re-run login.py and update INSTAGRAM_AUTH_B64.", handle, page.url,
+            )
+            return None
 
         views: list[int] = []
         deadline = time.time() + SCRAPER_TIMEOUT_S
@@ -154,7 +210,7 @@ async def scrape_creator_reels_async(handle: str) -> Optional[ScrapedStats]:
                 break
 
         if not views:
-            logger.error("@%s — could not scrape any views (session may be expired)", handle)
+            await _log_scrape_failure(page, handle)
             return None
 
         views = views[:SCRAPER_NUM_REELS]
