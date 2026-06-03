@@ -221,3 +221,65 @@ def test_process_pending_approvals_sends_when_approved():
 
     gmail_client.send_reply.assert_called_once()
     assert creator.state == NegotiationState.AWAITING_DECISION
+
+
+# ── Auto-import of replied creators (outreach → negotiation bridge) ───────────
+
+def test_import_replied_kicks_off_funnel():
+    import state_store
+    import gmail_client
+    state_store.get_creator = MagicMock(return_value=None)
+    seeded = _make_creator(state=NegotiationState.INTERESTED)
+    state_store.seed_creator = MagicMock(return_value=seeded)
+    state_store.upsert_creator = MagicMock()
+    gmail_client.get_unread_messages_in_thread = MagicMock(return_value=[{"id": "m1", "body": "Hi, I'm interested!"}])
+    gmail_client.mark_as_read = MagicMock()
+
+    item = {"email": "new@example.com", "first_name": "New", "instagram_username": "newh",
+            "outreach_thread_id": "T1", "brand_name": "Acme"}
+    with patch.object(negotiation_engine.outreach_sync, "fetch_replied_creators", return_value=[item]), \
+         patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.ASKING_DETAILS, None, "")), \
+         patch.object(negotiation_engine, "handle_new_interest") as new_interest, \
+         patch("config.AUTO_IMPORT_REPLIED", True):
+        negotiation_engine.import_replied_creators()
+
+    state_store.seed_creator.assert_called_once()
+    new_interest.assert_called_once()
+    gmail_client.mark_as_read.assert_called_once_with("m1")
+
+
+def test_import_replied_closes_decliner():
+    import state_store
+    import gmail_client
+    state_store.get_creator = MagicMock(return_value=None)
+    seeded = _make_creator(state=NegotiationState.INTERESTED)
+    state_store.seed_creator = MagicMock(return_value=seeded)
+    state_store.upsert_creator = MagicMock()
+    gmail_client.get_unread_messages_in_thread = MagicMock(return_value=[{"id": "m9", "body": "No thanks"}])
+    gmail_client.mark_as_read = MagicMock()
+
+    item = {"email": "no@example.com", "first_name": "No", "instagram_username": "noh",
+            "outreach_thread_id": "T2", "brand_name": "Acme"}
+    with patch.object(negotiation_engine.outreach_sync, "fetch_replied_creators", return_value=[item]), \
+         patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.NOT_INTERESTED, None, "")), \
+         patch.object(negotiation_engine, "handle_new_interest") as new_interest, \
+         patch("config.AUTO_IMPORT_REPLIED", True):
+        negotiation_engine.import_replied_creators()
+
+    new_interest.assert_not_called()
+    assert seeded.state == NegotiationState.CLOSED
+
+
+def test_import_replied_skips_existing():
+    import state_store
+    state_store.get_creator = MagicMock(return_value=_make_creator())  # already in the funnel
+    state_store.seed_creator = MagicMock()
+
+    item = {"email": "exists@example.com", "outreach_thread_id": "T3"}
+    with patch.object(negotiation_engine.outreach_sync, "fetch_replied_creators", return_value=[item]), \
+         patch.object(negotiation_engine, "handle_new_interest") as new_interest, \
+         patch("config.AUTO_IMPORT_REPLIED", True):
+        negotiation_engine.import_replied_creators()
+
+    state_store.seed_creator.assert_not_called()
+    new_interest.assert_not_called()
