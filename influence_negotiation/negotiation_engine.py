@@ -265,13 +265,33 @@ def _handle_rate_received(
     extracted_rate: Optional[float],
     intent: EmailIntent,
 ) -> None:
-    """Creator shared a rate. Scrape IG data if needed, compute offers, respond."""
+    """Creator shared a rate. Persist + surface it immediately, then price if we can."""
     if extracted_rate:
         creator.quoted_rate = extracted_rate
 
-    stats = None
+    # Persist and push the rate up front. A failed or slow Instagram scrape must
+    # NOT throw away the fact that the creator responded — the rate should show on
+    # the dashboard regardless; offers follow once we have IG data.
+    state_store.upsert_creator(creator)
+    outreach_sync.push_rate(creator)
+
+    stats = _get_or_scrape_stats(creator)
+    if not stats:
+        logger.warning(
+            "No Instagram data for %s yet — rate saved and pushed to the dashboard; "
+            "offers will be computed once a scrape succeeds (retried each tick).",
+            creator.creator_email,
+        )
+        return
+
+    _price_and_respond(creator, stats)
+
+
+def _get_or_scrape_stats(creator: Creator) -> Optional[ScrapedStats]:
+    """Return cached scraped stats if present, otherwise scrape the profile now."""
     if creator.scraped_p25:
-        stats = ScrapedStats(
+        logger.info("Using cached scraped stats for @%s", creator.instagram_handle)
+        return ScrapedStats(
             handle=creator.instagram_handle or "",
             views=json.loads(creator.scraped_views_raw) if creator.scraped_views_raw else [],
             p10=creator.scraped_p10 or 0,
@@ -280,20 +300,14 @@ def _handle_rate_received(
             p75=creator.scraped_p75 or 0,
             count=creator.scraped_reel_count or 0,
         )
-        logger.info("Using cached scraped stats for @%s", creator.instagram_handle)
-    elif creator.instagram_handle:
+    if creator.instagram_handle:
         logger.info("Scraping @%s now (rate received)", creator.instagram_handle)
-        stats = _scrape_and_store(creator)
+        return _scrape_and_store(creator)
+    return None
 
-    if not stats:
-        logger.warning(
-            "Cannot compute offer for %s — no Instagram data. "
-            "Set instagram_handle via seed.py and ensure Chrome is logged in.",
-            creator.creator_email,
-        )
-        return
 
-    # Recompute 6 offers now that we have the creator's quoted rate
+def _price_and_respond(creator: Creator, stats: ScrapedStats) -> None:
+    """Compute + push the 6 offers, then send Reply 2 / hold for approval / reject."""
     _compute_and_push_offers(creator, stats)
 
     try:
@@ -313,10 +327,11 @@ def _handle_rate_received(
     creator.budget_cap = offer.budget_cap
     creator.video_count = offer.video_count
 
-    if extracted_rate and extracted_rate > offer.budget_cap * 1.5:
+    rate = creator.quoted_rate
+    if rate and rate > offer.budget_cap * 1.5:
         subject, body = templates.high_rate_rejection(
             creator_name=creator.creator_name,
-            quoted_rate=extracted_rate,
+            quoted_rate=rate,
             **_brand_ctx(creator),
         )
         _send_and_update(creator, subject, body, NegotiationState.HIGH_RATE_REJECTED)
@@ -359,6 +374,30 @@ def _handle_rate_received(
         NegotiationState.AWAITING_DECISION,
         reset_followup=True,
     )
+
+
+def retry_pending_offers() -> None:
+    """
+    Self-heal creators whose rate arrived but whose Instagram scrape failed: they
+    sit in AWAITING_RATE with a quoted_rate but no scraped data. Re-attempt the
+    scrape each tick (cheap now that a dead session fast-fails) and, on success,
+    price + respond. Once a scrape succeeds a creator no longer matches, so it stops.
+    """
+    pending = [
+        c for c in state_store.get_active_creators()
+        if c.state == NegotiationState.AWAITING_RATE
+        and c.quoted_rate is not None
+        and not c.scraped_p25
+        and c.instagram_handle
+    ]
+    if not pending:
+        return
+    logger.info("Retrying scrape for %d creator(s) with a rate but no IG data", len(pending))
+    for creator in pending:
+        stats = _scrape_and_store(creator)
+        if stats:
+            logger.info("Scrape recovered for %s — pricing now", creator.creator_email)
+            _price_and_respond(creator, stats)
 
 
 def _handle_acceptance(creator: Creator) -> None:

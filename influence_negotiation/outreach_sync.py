@@ -25,6 +25,31 @@ def _auth_headers() -> dict:
     return headers
 
 
+def push_rate(creator: Creator) -> bool:
+    """
+    Push just the creator's quoted rate to the dashboard, independent of any
+    Instagram scrape or offers. Lets a creator's rate show up on the dashboard
+    immediately even when scraping fails or hasn't run yet.
+    """
+    if not OUTREACH_API_URL or not creator.instagram_handle:
+        return False
+    payload = {
+        "instagram_handle": creator.instagram_handle,
+        "creator_email": creator.creator_email,
+        "creator_name": creator.creator_name,
+        "quoted_rate": creator.quoted_rate,
+    }
+    try:
+        url = f"{OUTREACH_API_URL.rstrip('/')}/api/negotiation/push"
+        resp = requests.post(url, json=payload, headers=_auth_headers(), timeout=10)
+        resp.raise_for_status()
+        logger.info("Pushed quoted rate for @%s to outreach dashboard", creator.instagram_handle)
+        return True
+    except Exception as e:
+        logger.warning("Rate push failed for @%s: %s", creator.instagram_handle, e)
+        return False
+
+
 def fetch_replied_creators() -> List[dict]:
     """
     Pull creators who replied to outreach and are ready to enter the negotiation
