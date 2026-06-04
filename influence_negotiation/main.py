@@ -60,6 +60,7 @@ def run_once() -> None:
     negotiation_engine.import_replied_creators()   # pull creators who replied to outreach
     _send_initial_reply1()                         # Reply 1 for any new INTERESTED creators
     process_new_emails()
+    negotiation_engine.retry_pending_offers()      # re-scrape creators stuck after a failed scrape
     negotiation_engine.process_pending_approvals()
     negotiation_engine.run_followups()
 

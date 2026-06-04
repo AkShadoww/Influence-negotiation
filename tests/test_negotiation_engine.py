@@ -173,6 +173,7 @@ def test_rate_holds_for_approval_when_required():
     with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 500.0, "rate")), \
          patch("pricing_engine.compute_offer_with_claude_review", return_value=_mock_offer()), \
          patch.object(negotiation_engine, "_compute_and_push_offers"), \
+         patch.object(negotiation_engine.outreach_sync, "push_rate"), \
          patch.object(negotiation_engine, "_campaign_info", return_value=info), \
          patch("config.REQUIRE_OFFER_APPROVAL", True), \
          patch("config.OUTREACH_API_URL", "http://dashboard"):
@@ -181,6 +182,44 @@ def test_rate_holds_for_approval_when_required():
 
     gmail_client.send_reply.assert_not_called()
     assert creator.state == NegotiationState.AWAITING_APPROVAL
+
+
+def test_rate_without_scrape_still_saves_and_pushes():
+    """A failed IG scrape must not discard the rate — it's persisted and pushed."""
+    import gmail_client
+    import state_store
+    gmail_client.send_reply = MagicMock()
+    state_store.upsert_creator = MagicMock()
+
+    with patch.object(negotiation_engine, "classify_email", return_value=(EmailIntent.RATE_SHARED, 500.0, "rate")), \
+         patch("instagram_scraper.scrape_creator_reels", return_value=None), \
+         patch.object(negotiation_engine.outreach_sync, "push_rate") as push_rate:
+        creator = _make_creator(scraped_p25=None, scraped_p75=None, scraped_p10=None, scraped_p50=None)
+        negotiation_engine.handle_incoming_email(creator, "My rate is $500.")
+
+    assert creator.quoted_rate == 500.0
+    state_store.upsert_creator.assert_called()       # rate persisted
+    push_rate.assert_called_once()                    # rate surfaced on the dashboard
+    gmail_client.send_reply.assert_not_called()       # no offer without IG data
+
+
+def test_retry_pending_offers_reprices_recovered_creator():
+    """Once a previously-failed scrape succeeds, the stuck creator gets priced."""
+    import state_store
+    stuck = _make_creator(
+        state=NegotiationState.AWAITING_RATE, quoted_rate=500.0,
+        scraped_p25=None, scraped_p75=None, scraped_p10=None, scraped_p50=None,
+    )
+    state_store.get_active_creators = MagicMock(return_value=[stuck])
+    fake_stats = ScrapedStats(
+        handle="testhandle", views=[10000, 20000], p10=12000, p25=20000, p50=30000, p75=40000, count=2,
+    )
+
+    with patch.object(negotiation_engine, "_scrape_and_store", return_value=fake_stats), \
+         patch.object(negotiation_engine, "_price_and_respond") as price:
+        negotiation_engine.retry_pending_offers()
+
+    price.assert_called_once()
 
 
 def test_rate_sends_legacy_offer_when_approval_disabled():
